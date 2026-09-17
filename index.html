@@ -315,7 +315,17 @@ function load(){
     /* a non-numeric leftAt makes every comparison in bandOf() false and falls
        through to the month gift. a newborn is honest; an unearned gift is a lie. */
     if(!Number.isFinite(s.leftAt) || !Number.isFinite(s.born)) return null;
-    if(!s.pos || !Array.isArray(s.objects)) return null;
+    if(!s.pos || !Number.isFinite(s.pos.u) || !Number.isFinite(s.pos.v)) return null;
+    if(!Array.isArray(s.objects)) return null;
+    for(var i=0;i<s.objects.length;i++){
+      var o = s.objects[i];
+      if(!o || typeof o.k !== "string" || !Number.isFinite(o.u) || !Number.isFinite(o.v)) return null;
+    }
+    /* these three are repairable rather than fatal — a scrambled floor is not
+       worth throwing away a save over. */
+    if(!s.wear || typeof s.wear !== "object") s.wear = {};
+    if(!Array.isArray(s.recent)) s.recent = [];
+    if(!(s.chair >= 0 && s.chair < CHAIRS.length)) s.chair = 0;
     return s;
   }catch(e){ return null; }
 }
@@ -323,7 +333,12 @@ function save(s){
   try{
     const raw = JSON.stringify(s);
     if(store) store.setItem(KEY, raw); else mem = raw;
-  }catch(e){}
+  }catch(e){
+    /* storage can start refusing writes long after the probe passed. keep the
+       save in memory rather than silently dropping it for the rest of the run. */
+    store = null;
+    try{ mem = JSON.stringify(s); }catch(e2){}
+  }
 }
 
 /* ============================ simulate ============================ */
@@ -343,7 +358,14 @@ function simulate(st, away, now){
   /* a clock that jumps can't buy an absence the creature never lived through.
      without this, a dead RTC that resets and then gets corrected hands over the
      month gift — once, permanently — to a two-day-old creature. */
-  const lived = Math.max(0, now - (s.born || now));
+  let lived = Infinity;
+  if (Number.isFinite(s.born) && s.born > 0){
+    /* born ahead of now means the clock was fast when it was written and has
+       since been corrected. repair it and don't clamp this once — freezing the
+       room until real time catches up is worse than the thing we're guarding. */
+    if (s.born > now) s.born = now;
+    else lived = now - s.born;
+  }
   const band = bandOf(Math.min(Math.max(0, away), lived), s);
   if (band === "none"){ s.leftAt = now; return {next:s, band:"none", fresh:[]}; }
 
@@ -440,10 +462,10 @@ function wearPath(s, a, b){
     const t = i/steps;
     const u = a.u + (b.u-a.u)*t, v = a.v + (b.v-a.v)*t;
     const gx = Math.round(u*(GX-1)), gy = Math.round(v*(GY-1));
-    if (gx<0||gx>=GX||gy<0||gy>=GY) continue;
+    if (!(gx>=0 && gx<GX && gy>=0 && gy<GY)) continue;
     for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++){
       const x=gx+dx, y=gy+dy;
-      if (x<0||x>=GX||y<0||y>=GY) continue;
+      if (!(x>=0 && x<GX && y>=0 && y<GY)) continue;   /* also rejects NaN */
       const w = (dx===0&&dy===0) ? 0.085 : 0.026;
       const key = y*GX+x;
       s.wear[key] = Math.min(1, (s.wear[key]||0) + w);
@@ -1134,7 +1156,7 @@ function wrap(text, maxW, fs){
 
 function note(P, t){
   const n = state.note;
-  if (!n || !n.lines) return;
+  if (!n) return;   /* an empty note still has to be able to grow a watching line */
   let text = n.lines;
   if (n.watched){
     for (let i=0;i<n.watched && i<NOTES.watching.length;i++){
@@ -1155,7 +1177,7 @@ function note(P, t){
     /* two levers, not one: shrink the type, and as it gets desperate also
        close up the leading and the margins. a short window shouldn't be able
        to push the top of a letter off the screen. */
-    const tight = Math.min(1, guard/9);
+    const tight = Math.min(1, guard/3);
     lh = fs*(1.62 - 0.30*tight); pad = fs*(1.50 - 0.66*tight);
     tw = 0; for (const l of lines) tw = Math.max(tw, cx.measureText(l).width);
     pw = Math.min(W*0.94, tw + pad*2);
@@ -1192,7 +1214,7 @@ function note(P, t){
     }
   }
 
-  const rot = ((hash32(n.at|0) % 100)/100 - 0.5) * (long ? 0.022 : 0.055);
+  const rot = ((Math.abs(hash32(n.at|0)) % 100)/100 - 0.5) * (long ? 0.022 : 0.055);
   const a = clamp((t-0.45)/0.55);
 
   cx.save();
@@ -1292,10 +1314,11 @@ function leaving(){
   state.leftAt = Date.now();
   save(state);
   stopWatching();
+  pinTimers.forEach(clearTimeout); pinTimers = [];
   document.getElementById("pin").classList.remove("on");
 }
 
-let pendingFirst = false;
+let pendingFirst = false, pinTimers = [];
 
 /* first ever look: the room, the shape, one line. nothing is owed yet. */
 function beginFirst(){
@@ -1304,8 +1327,8 @@ function beginFirst(){
   state.leftAt = Date.now();
   save(state);
   const pin = document.getElementById("pin");
-  setTimeout(()=>pin.classList.add("on"), 2600);
-  setTimeout(()=>pin.classList.remove("on"), 26000);
+  pinTimers.push(setTimeout(()=>pin.classList.add("on"), 2600));
+  pinTimers.push(setTimeout(()=>pin.classList.remove("on"), 26000));
   startWatching();
   render();
 }
@@ -1375,10 +1398,11 @@ cv.addEventListener("touchstart", touch, {passive:true});
 
   pendingFirst = first;
 
-  if (document.hidden){
+  if (document.hidden || (document.hasFocus && !document.hasFocus())){
     /* a pinned tab can be restored into the background. don't resolve the
        absence where nobody can see it — wait until it is actually looked at,
-       or a week's letter gets spent on an empty room. */
+       or a week's letter gets spent on an empty room. an unfocused window
+       reports hidden === false, so focus has to be part of the test. */
     away = true;
     return;
   }

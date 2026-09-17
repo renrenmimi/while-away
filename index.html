@@ -1134,7 +1134,11 @@ function note(P, t){
     const frac = long ? (wide ? 0.55 : 0.86) : (wide ? 0.42 : 0.78);
     const maxW = Math.min(W*Math.min(0.88, frac + guard*0.025), long ? 640 : 460);
     lines = wrap(text, maxW, fs);
-    lh = fs*1.62; pad = fs*1.5;
+    /* two levers, not one: shrink the type, and as it gets desperate also
+       close up the leading and the margins. a short window shouldn't be able
+       to push the top of a letter off the screen. */
+    const tight = Math.min(1, guard/9);
+    lh = fs*(1.62 - 0.30*tight); pad = fs*(1.50 - 0.66*tight);
     tw = 0; for (const l of lines) tw = Math.max(tw, cx.measureText(l).width);
     pw = Math.min(W*0.94, tw + pad*2);
     ph = lines.length*lh + pad*2 - lh*0.35;
@@ -1152,7 +1156,14 @@ function note(P, t){
   let cyp = long ? H*(n.kind === "month" ? 0.45 : 0.55)
                  : Math.min(pt(0,0.86).y, H - ph/2 - H*0.03);
   cxp = Math.min(W - pw/2 - W*0.02, Math.max(pw/2 + W*0.02, cxp));
-  cyp = Math.min(H - ph/2 - H*0.02, Math.max(ph/2 + H*0.02, cyp));
+  if (ph > H - H*0.04){
+    /* genuinely taller than the window. run it off the bottom edge, never off
+       the top — a big sheet leaving the frame reads fine, a letter that starts
+       mid-sentence does not. */
+    cyp = ph/2 + H*0.02;
+  } else {
+    cyp = Math.min(H - ph/2 - H*0.02, Math.max(ph/2 + H*0.02, cyp));
+  }
 
   /* the one coloured thing never gets covered up */
   const gift = state.objects.find(o=>o.k === "gift");

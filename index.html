@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>while away</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0e0f12;overflow:hidden}
+  body{-webkit-font-smoothing:antialiased}
+  canvas{display:block;width:100%;height:100%;cursor:default}
+  #pin{
+    position:fixed;left:14px;top:10px;
+    font:400 12px/1.4 ui-serif,Georgia,"Iowan Old Style",Palatino,serif;
+    color:#8a8378;letter-spacing:.01em;
+    opacity:0;transition:opacity 2.4s ease;
+    pointer-events:none;user-select:none;
+  }
+  #pin.on{opacity:.62}
+  @media (prefers-reduced-motion: reduce){ #pin{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="room"></canvas>
+<div id="pin">pin this tab and go do something else.</div>
+<script>
+"use strict";
+/* ------------------------------------------------------------------
+   while away
+   one room. it does nothing while you look at it.
+   no network, no timers, no accounts. all state in localStorage.
+   ------------------------------------------------------------------ */
+
+/* ============================ writing ============================ */
+/* the notes are the piece. everything else is scaffolding for them. */
+
+const SILENCE = "";
+
+const NOTES = {
+
+  stir: [ /* ~1-8 minutes away. it often says nothing at all — see compose() */
+    "moved. no reason.",
+    "the floor is warmer over here.",
+    "there was a sound outside. it stopped.",
+    "i wanted to see the room from this side.",
+    "the light moved so i moved.",
+    "stretched. that takes longer than you'd think.",
+    "the dust turns over in the light if nobody touches it.",
+    "i'm over here now. that's the whole of it."
+  ],
+
+  shift: [ /* ~8-45 minutes */
+    "i counted the boards on the floor. lost count twice.\nthere's the same number either way.",
+    "something went past the window. it was fast and low.",
+    "put my hand flat on the glass. it was cold. that's the whole thing.",
+    "the pipe knocked twice and then didn't do it again.",
+    "moved to where i can hear the gutter better.",
+    "the paint is coming off the wall in one place and i've been picking at it.\ni should stop.",
+    "nothing happened. i want to be clear that that's fine.",
+    "i've been sitting with my back to the window. the sun gets through anyway.",
+    "there's a draught here i hadn't found before. i'm keeping it."
+  ],
+
+  hour: [ /* ~45m-5h, arrives with something found */
+    "found this by the door. i don't know whose it is.",
+    "this was under the boards. it's been here longer than i have.",
+    "picked this up. it's heavier than it looks.",
+    "this was in the corner the whole time.\ni've walked past it a hundred times.",
+    "i think a bird dropped this. i didn't see the bird.",
+    "there was a whole one of these once. this is the part that's left.",
+    "found this. i've put it where the light gets to it in the afternoon.",
+    "this came out of the gap by the wall. i wasn't looking for it."
+  ],
+
+  half: [ /* ~5-20h, the room is visibly different */
+    "moved the chair out of the light. then back. then out again.\nit's out now. i'll probably change my mind.",
+    "took everything off the floor and put it back differently.\nsome of it is in better places. some of it isn't.",
+    "swept the floor with my hands. it took hours and it looks the same.\nit isn't the same.",
+    "the light came in one side and went off the other and i watched all of it.\ni've got nothing to show for that.",
+    "i've been moving things a few inches at a time.\nyou probably can't tell. that's alright.",
+    "slept in the middle of the floor, which i don't usually do.\nthe boards are warmer there. i don't know why.",
+    "the room got small so i put some things away.\nnothing's gone. it's just away."
+  ],
+
+  /* ~20h-3d: it made something, and it mentions the weather.
+     composed as weather line + made line. */
+  weather: {
+    clear: [
+      "clear the whole day. the light got as far as the back wall and sat there.",
+      "not a cloud. by the afternoon everything in here had two edges."
+    ],
+    cloud: [
+      "grey all day. the room had no shadows in it at all.",
+      "flat light since morning. nothing casts anything."
+    ],
+    rain: [
+      "it rained. i closed the window.",
+      "it rained in the afternoon and again after dark. the second one was better.",
+      "rain on and off. the frame leaks a little at the bottom corner. i put a rag there."
+    ],
+    fog: [
+      "the window was white all morning. the outside was just gone, and then it came back.",
+      "fog to the glass. i couldn't see the fence. i knew it was there."
+    ],
+    snow: [
+      "it snowed and it stuck. everything out there is the one colour now.",
+      "snow since before it was light. the room went quiet in a way i wasn't ready for."
+    ],
+    wind: [
+      "wind all day. the glass moved in the frame and i kept thinking it was something else.",
+      "it blew hard from the same direction for hours. the door knocked twice on its own."
+    ]
+  },
+  made: [
+    "made this. it took longer than it needed to and i started over twice.",
+    "made this out of what was already here. it isn't for anything.",
+    "i made this. it's finished. i don't know what it is.",
+    "this is the third one. the first two are gone.",
+    "made this. it came out that shape on its own.",
+    "made this instead of doing the other thing i was going to do."
+  ],
+
+  trip: [ /* 3-7 days: it has clearly been somewhere */
+    "went further than the fence. there's a road, then a field, then i turned round.\nbrought this back. it doesn't belong in here and i like that about it.",
+    "followed the water to where it goes under the ground. it's loud down there.\nthis was on the bank. it isn't from around here.",
+    "i was out past the trees. the ground changes colour after a while — i didn't know that.\nthis was lying in it.",
+    "i went somewhere with a lot of people in it and stayed at the edge of it.\nthis was on the ground. someone had already dropped it.",
+    "i was gone a few days. the room was fine without me, which i didn't expect to mind.\nhere. it was on a wall and now it isn't."
+  ],
+
+  /* a week. the load-bearing one.
+     no hard line breaks inside a paragraph — the page decides where lines end,
+     so it reads the same on a wide window and on a phone. */
+  letter: [
+    "it was a long one.\n\n" +
+    "one of the days — monday maybe, i lost track — the light came in at a different angle and stayed there most of the afternoon. i sat in it until it moved off the floor. then i went out.\n\n" +
+    "i walked further than i meant to. there's a place where the ground goes soft and you can hear the water moving under it. i stood there a while listening. i brought back the flattest stone i could carry. it's by the door. you can pick it up.\n\n" +
+    "it rained twice. once at night, which i like better.\n\n" +
+    "i moved the chair once and moved it back.\n\n" +
+    "i don't know how to say the rest of it. it was an ordinary week and i was in it.\n\n" +
+    "anyway. you're back.",
+
+    "i started keeping a list of things i can hear from in here.\n\n" +
+    "the pipe. the gutter. something in the wall that only starts after dark and stops before the light does. a bird i've never seen, always in the same place.\n\n" +
+    "i stopped writing them down after a couple of days. i just listened.\n\n" +
+    "one night it was warm enough to leave the window open the whole time. i didn't sleep. i wasn't tired. the room smelled like outside until morning.\n\n" +
+    "i went as far as the fence and came back. that isn't far. it was enough.\n\n" +
+    "there's a thing on the floor i don't have a name for. it's yours if you want it. it doesn't do anything.\n\n" +
+    "that's the week. i'm glad it happened.",
+
+    "i lost a day somewhere in the middle. i don't mean anything bad by that. i sat down when the light was on the wall, and when i got up it was on the wall again and the floor had gone cold.\n\n" +
+    "i made something. it took much longer than it needed to and i undid most of it twice. it's near the window now. it isn't for anything, it just came out that shape.\n\n" +
+    "the weather turned. you can tell by how the glass feels first thing.\n\n" +
+    "i thought about the door a lot this week. not going through it. just that it's there, and that it goes somewhere.\n\n" +
+    "it's a good room. i'm alright in it."
+  ],
+
+  /* a month. once. most people will never see this, and that's correct. */
+  month:
+    "i found this a while back and i've moved it a hundred times. under the chair. by the window. back under the chair.\n\n" +
+    "i kept thinking there was a right place for it and that i'd know it when i saw it. there isn't. so it's out in the middle now, where it doesn't match anything.\n\n" +
+    "it's the only thing in here with a colour. i'd like you to have it.\n\n" +
+    "i scratched a mark on the wall by the window. it's small. it's just so there's a mark.",
+
+  again: [ /* very long absences, after the month has already happened */
+    "a long one, that.\ni was alright. the light kept coming in and i kept moving out of it.\nthere's nothing you missed. it was just days.",
+    "i wondered a bit, and then i stopped wondering and got on with it.\nnothing's wrong. same room. i kept it going.\nyou can go again whenever. that isn't a rule, it's just true.",
+    "i'm still here. that's most of the news.\nthe window sticks now when it's damp. i've stopped fighting it.\nsit down if you're staying.",
+    "somewhere in there the season changed and i didn't write it down.\nit's fine. i've been sitting in the light and moving things a few inches at a time.\nnothing here keeps score."
+  ],
+
+  /* the clock went backwards. the bug gets a line instead of a defence. */
+  slept: "i think i slept wrong. what time is it?",
+
+  /* held back until you have been watching a long while. rare. */
+  watching: [
+    "you're still here.",
+    "it's ok. i'll wait until you go.",
+    "you can sit down if you want."
+  ],
+
+  firstLine: "while you're looking at it, it won't move."
+};
+
+/* what turns up on the floor. none of it is ever explained.
+   a thing lying there with no account of itself is stronger than a caption,
+   and there is nothing here to hunt for. */
+const FOUND = ["stone","leaf","feather","key","shell","cone",
+               "spool","cap","fold","twig","glass","nail"];
+const MADE  = ["stack","knot","boat","ring"];
+const FAR   = ["ticket","flower","tile","coin","chip"];
+
+/* ============================ time ============================ */
+
+const MIN = 60e3, HOUR = 3600e3, DAY = 864e5;
+
+function bandOf(ms, st){
+  if (ms < 1*MIN)   return "none";
+  if (ms < 8*MIN)   return "stir";
+  if (ms < 45*MIN)  return "shift";
+  if (ms < 5*HOUR)  return "hour";
+  if (ms < 20*HOUR) return "half";
+  if (ms < 3*DAY)   return "day";
+  if (ms < 7*DAY)   return "trip";
+  if (ms < 30*DAY)  return "letter";
+  return (st.months|0) > 0 ? "again" : "month";
+}
+
+function dayIndex(d){ return Math.floor((d - d.getTimezoneOffset()*6e4)/DAY); }
+
+/* the timezone is already sitting there. no setting, no network, no prompt —
+   and june outside a window in melbourne is winter. */
+const SOUTH = /^(Australia\/|Antarctica\/|Pacific\/(Auckland|Chatham|Fiji|Norfolk|Noumea|Port_Moresby)|America\/(Argentina\/|Santiago|Punta_Arenas|Sao_Paulo|Bahia|Campo_Grande|Cuiaba|Montevideo|Asuncion|La_Paz|Lima)|Africa\/(Johannesburg|Harare|Maputo|Windhoek|Lusaka|Gaborone|Luanda)|Indian\/(Mauritius|Reunion|Antananarivo)|Atlantic\/Stanley)/;
+let southern = false;
+try { southern = SOUTH.test(Intl.DateTimeFormat().resolvedOptions().timeZone || ""); } catch(e){}
+const FLIP = {winter:"summer", spring:"autumn", summer:"winter", autumn:"spring"};
+
+function seasonOf(d){
+  const m = d.getMonth();
+  let s;
+  if (m===11||m===0||m===1) s = "winter";
+  else if (m<5) s = "spring";
+  else if (m<8) s = "summer";
+  else s = "autumn";
+  return southern ? FLIP[s] : s;
+}
+
+function hourBand(d){
+  const h = d.getHours() + d.getMinutes()/60;
+  if (h < 5)  return "night";
+  if (h < 7)  return "dawn";
+  if (h < 11) return "morning";
+  if (h < 15) return "midday";
+  if (h < 18) return "afternoon";
+  if (h < 20) return "dusk";
+  if (h < 23) return "evening";
+  return "night";
+}
+
+/* weather is a pure function of the calendar day + season. no network,
+   no randomness that drifts, same sky all day. */
+const WEATHER_MIX = {
+  winter: ["cloud","cloud","snow","snow","clear","rain","fog","wind","cloud","clear"],
+  spring: ["clear","rain","cloud","clear","rain","wind","fog","clear","cloud","rain"],
+  summer: ["clear","clear","clear","cloud","rain","clear","wind","clear","cloud","clear"],
+  autumn: ["cloud","rain","fog","clear","wind","rain","cloud","clear","rain","cloud"]
+};
+function weatherOf(d){
+  const s = seasonOf(d), i = dayIndex(d);
+  const mix = WEATHER_MIX[s];
+  return mix[Math.abs(hash32(i*2654435761 ^ 0x9e37)) % mix.length];
+}
+
+function hash32(n){ n=(n^61)^(n>>>16); n=n+(n<<3); n=n^(n>>>4); n=Math.imul(n,0x27d4eb2d); n=n^(n>>>15); return n|0; }
+function rngFrom(seed){ let a = seed>>>0; return function(){ a += 0x6D2B79F5; let t=a; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return ((t^t>>>14)>>>0)/4294967296; }; }
+const pick = (r,arr)=>arr[Math.floor(r()*arr.length)];
+
+/* ============================ state ============================ */
+
+const KEY = "while-away/v1";
+
+const SPOTS = [
+  {id:"door",    u:0.13, v:0.28},
+  {id:"wallL",   u:0.06, v:0.52},
+  {id:"corner",  u:0.04, v:0.74},
+  {id:"midback", u:0.40, v:0.15},
+  {id:"middle",  u:0.47, v:0.55},
+  {id:"front",   u:0.28, v:0.76},
+  {id:"window",  u:0.74, v:0.27},
+  {id:"wallR",   u:0.94, v:0.44},
+  {id:"edgeR",   u:1.03, v:0.70},
+  {id:"byChair", u:0.62, v:0.62},
+  {id:"far",     u:0.57, v:0.04}
+];
+const CHAIRS = [ {u:0.70,v:0.50}, {u:0.34,v:0.44}, {u:0.83,v:0.72} ];
+const POSES = ["settled","up","curl","lean"];
+const GX = 44, GY = 16;   /* wear grid over the floor */
+
+function fresh(now){
+  return {
+    v: 1,
+    born: now,
+    leftAt: now,
+    pos: {u:0.47, v:0.55, pose:"settled", at:null},
+    chair: 0,
+    objects: [],
+    wear: {},
+    note: null,
+    recent: [],
+    months: 0,
+    letters: 0,
+    mark: false,
+    told: false
+  };
+}
+
+let store = null;
+try { store = window.localStorage; store.setItem(KEY+"/t","1"); store.removeItem(KEY+"/t"); }
+catch(e){ store = null; }
+let mem = null;
+
+function load(){
+  try{
+    const raw = store ? store.getItem(KEY) : mem;
+    if(!raw) return null;
+    const s = JSON.parse(raw);
+    if(!s || s.v !== 1) return null;
+    if(!s.pos || !Array.isArray(s.objects)) return null;
+    return s;
+  }catch(e){ return null; }
+}
+function save(s){
+  try{
+    const raw = JSON.stringify(s);
+    if(store) store.setItem(KEY, raw); else mem = raw;
+  }catch(e){}
+}
+
+/* ============================ simulate ============================ */
+/* one pure-ish step: everything the absence bought, resolved at once. */
+
+function simulate(st, away, now){
+  const s = JSON.parse(JSON.stringify(st));
+  const d = new Date(now);
+  const r = rngFrom(hash32(now ^ Math.floor(away/1000) ^ (s.born|0)));
+
+  if (away < -2*MIN){                 /* the clock went backwards */
+    s.note = {lines: NOTES.slept, at: now, kind:"slept", watched:0};
+    s.leftAt = now;
+    return {next:s, band:"slept", fresh:[]};
+  }
+
+  const band = bandOf(Math.max(0, away), s);
+  if (band === "none"){ s.leftAt = now; return {next:s, band:"none", fresh:[]}; }
+
+  s.told = true;
+
+  /* --- it is somewhere else --- */
+  const surprise = r() < (band==="stir" ? 0.05 : 0.16);
+  moveTo(s, r, surprise);
+
+  /* --- the chair, occasionally --- */
+  let chairMoved = false;
+  if ((band==="half"||band==="day"||band==="trip"||band==="letter"||band==="month"||band==="again") && r()<0.55){
+    const c = (s.chair + 1 + Math.floor(r()*(CHAIRS.length-1))) % CHAIRS.length;
+    if (c !== s.chair){ s.chair = c; chairMoved = true; }
+  }
+
+  /* --- things --- */
+  const fresh = [];
+  const add = (kind)=>{
+    const o = {
+      k: kind,
+      u: 0.10 + r()*0.82,
+      v: 0.26 + r()*0.50,
+      a: (r()-0.5)*1.2,
+      id: (now + Math.floor(r()*1e6)).toString(36) + fresh.length,
+      at: now
+    };
+    offChair(o, s);
+    s.objects.push(o); fresh.push(o.id);
+    return o;
+  };
+
+  if (band==="stir"  && r()<0.18) add(pick(r,FOUND));
+  if (band==="shift" && r()<0.35) add(pick(r,FOUND));
+  if (band==="hour")  add(pick(r,FOUND));
+  if (band==="half"){ if(r()<0.6) add(pick(r,FOUND)); shuffleFloor(s, r); }
+  if (band==="day")   add(pick(r,MADE));
+  if (band==="trip")  add(pick(r,FAR));
+  if (band==="letter"){ add(pick(r,FAR)); if(r()<0.7) add(pick(r,MADE)); s.letters++; }
+  if (band==="again"){ if(r()<0.8) add(pick(r, r()<0.5?MADE:FAR)); shuffleFloor(s, r); }
+  if (band==="month"){
+    const g = add("gift");
+    g.u = 0.50 + (r()-0.5)*0.05; g.v = 0.87;    /* out in the middle, in front */
+    s.months++; s.mark = true;
+  }
+
+  /* the room stays small enough to see. nothing is ever lost, it's just away. */
+  const CAP = 11;
+  while (s.objects.length > CAP){
+    let idx = -1;                       /* the gift is never put away */
+    for (let i=0;i<s.objects.length;i++){
+      if (s.objects[i].k === "gift") continue;
+      if (idx < 0 || s.objects[i].at < s.objects[idx].at) idx = i;
+    }
+    if (idx < 0) break;
+    s.objects.splice(idx,1);
+  }
+
+  /* --- what it says --- */
+  s.note = {lines: compose(s, band, r, d, chairMoved), at: now, kind: band, watched: 0};
+  s.leftAt = now;
+  return {next:s, band, fresh};
+}
+
+function moveTo(s, r, surprise){
+  const from = s.pos;
+  if (surprise){
+    const odd = r();
+    if (odd < 0.35){ s.pos = {u:0.78, v:0.05, pose:"settled", at:"sill"}; }
+    else if (odd < 0.5){ s.pos = {u:0.78, v:0.05, pose:"settled", at:"out"}; }
+    else {
+      const sp = pick(r, [SPOTS[8], SPOTS[10], SPOTS[2], SPOTS[5]]);
+      s.pos = {u:sp.u, v:sp.v, pose:pick(r,POSES), at:null};
+    }
+  } else {
+    let sp, guard=0;
+    do { sp = pick(r, SPOTS); guard++; }
+    while (guard<12 && Math.abs(sp.u-from.u)<0.10 && Math.abs(sp.v-from.v)<0.10);
+    s.pos = {
+      u: Math.min(1.05, Math.max(-0.02, sp.u + (r()-0.5)*0.07)),
+      v: Math.min(0.78, Math.max(0.03, sp.v + (r()-0.5)*0.06)),
+      pose: pick(r, POSES),
+      at: null
+    };
+  }
+  if (!from.at && !s.pos.at) wearPath(s, from, s.pos);
+}
+
+/* the floor remembers, faintly, and only very slowly forgets. */
+function wearPath(s, a, b){
+  for (const k in s.wear){ s.wear[k] *= 0.985; if (s.wear[k] < 0.02) delete s.wear[k]; }
+  const steps = 26;
+  for (let i=0;i<=steps;i++){
+    const t = i/steps;
+    const u = a.u + (b.u-a.u)*t, v = a.v + (b.v-a.v)*t;
+    const gx = Math.round(u*(GX-1)), gy = Math.round(v*(GY-1));
+    if (gx<0||gx>=GX||gy<0||gy>=GY) continue;
+    for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++){
+      const x=gx+dx, y=gy+dy;
+      if (x<0||x>=GX||y<0||y>=GY) continue;
+      const w = (dx===0&&dy===0) ? 0.085 : 0.026;
+      const key = y*GX+x;
+      s.wear[key] = Math.min(1, (s.wear[key]||0) + w);
+    }
+  }
+}
+
+function shuffleFloor(s, r){
+  for (const o of s.objects){
+    if (o.k === "gift") continue;
+    o.u = Math.min(0.94, Math.max(0.08, o.u + (r()-0.5)*0.22));
+    o.v = Math.min(0.78, Math.max(0.26, o.v + (r()-0.5)*0.16));
+    o.a += (r()-0.5)*0.8;
+    offChair(o, s);
+  }
+}
+
+/* nothing gets left sitting on the chair, or underneath it */
+function offChair(o, s){
+  const near = [CHAIRS[s.chair|0]];
+  if (!s.pos.at) near.push(s.pos);
+  for (const c of near){
+    if (Math.abs(o.u-c.u) < 0.10 && Math.abs(o.v-c.v) < 0.11){
+      o.u = Math.min(0.94, Math.max(0.08, c.u + (o.u < c.u ? -0.15 : 0.15)));
+    }
+  }
+}
+
+function compose(s, band, r, d, chairMoved){
+  const used = s.recent || (s.recent = []);
+  const takeFrom = (arr)=>{
+    const pool = arr.filter(x => used.indexOf(x) < 0);
+    const line = pick(r, pool.length ? pool : arr);
+    used.push(line); while (used.length > 7) used.shift();
+    return line;
+  };
+
+  /* the shortest absence usually gets no words. the silence is not missing
+     content, it is most of the tone. */
+  if (band === "stir" && r() < 0.42) return SILENCE;
+
+  if (band === "day"){
+    const w = weatherOf(d);
+    return takeFrom(NOTES.weather[w] || NOTES.weather.cloud) + "\n" + takeFrom(NOTES.made);
+  }
+  if (band === "month")  return NOTES.month;
+  if (band === "letter") return takeFrom(NOTES.letter);
+
+  if (chairMoved && (band==="half") && r()<0.5) return "moved the chair. it was in the light.";
+
+  const pool = NOTES[band];
+  if (!pool) return SILENCE;
+  return takeFrom(pool);
+}
+
+/* ============================ the room ============================ */
+
+const cv = document.getElementById("room");
+const cx = cv.getContext("2d");
+let W=0, H=0, DPR=1, G=null;
+let state = null, freshIds = [], anim = 1, animRAF = 0;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function geometry(){
+  const hz = Math.round(H*0.50);
+  let wx = W*0.575, ww = W*0.305, wy = H*0.11, wh = H*0.29;
+  if (W/H < 0.95){ wx = W*0.50; ww = W*0.44; }
+  ww = Math.min(ww, W*0.42);
+  G = {hz, win:{x:wx, y:wy, w:ww, h:wh}, door:{x:W*0.055, w:W*0.115, y:hz-H*0.335, h:H*0.335}};
+}
+
+function pt(u,v){
+  const y = G.hz + (H-G.hz)*Math.pow(Math.max(0,v), 1.45);
+  const spread = 0.40 + 0.62*Math.pow(Math.max(0,v), 0.9);
+  const x = W/2 + (u-0.5)*W*spread;
+  return {x, y, s: 0.42 + 0.86*Math.pow(Math.max(0,v), 0.85)};
+}
+
+/* ---------- palette: the light is the real clock ---------- */
+const PALETTES = {
+  night:     {wt:"#1c1e26", wb:"#141620", ff:"#15171f", fn:"#0d0e14", sil:"#04050a", ink:"#8e919b", glow:"185,205,245", ga:0.05, paper:"#c9c4b8", pink:"#2a2724"},
+  dawn:      {wt:"#3f3942", wb:"#2c2830", ff:"#2e2a33", fn:"#201d25", sil:"#0b0b11", ink:"#a9a1a0", glow:"255,186,160", ga:0.11, paper:"#ded7ca", pink:"#2a2622"},
+  morning:   {wt:"#e9e3d7", wb:"#d6cfc1", ff:"#cbc2b1", fn:"#a9a191", sil:"#1a1713", ink:"#5c554a", glow:"255,243,209", ga:0.24, paper:"#f7f2e7", pink:"#2b2721"},
+  midday:    {wt:"#f0ebe0", wb:"#ddd7ca", ff:"#d4ccbc", fn:"#b0a898", sil:"#191612", ink:"#5a5348", glow:"255,250,226", ga:0.27, paper:"#f9f5eb", pink:"#2b2721"},
+  afternoon: {wt:"#ece2d0", wb:"#d7ccb8", ff:"#cec2ab", fn:"#a99d87", sil:"#191510", ink:"#5e5445", glow:"255,224,176", ga:0.26, paper:"#f7f0e0", pink:"#2c2720"},
+  dusk:      {wt:"#6f6060", wb:"#4b4245", ff:"#4b4142", fn:"#382f33", sil:"#0d0a0d", ink:"#b0a69c", glow:"255,158,116", ga:0.16, paper:"#ddd3c4", pink:"#2a2521"},
+  evening:   {wt:"#31323b", wb:"#23242c", ff:"#242530", fn:"#181920", sil:"#06070c", ink:"#93949d", glow:"172,182,215", ga:0.07, paper:"#cdc8bc", pink:"#2a2724"}
+};
+function palette(d, w){
+  const p = Object.assign({}, PALETTES[hourBand(d)]);
+  if (w==="rain" || w==="cloud") p.ga *= 0.35;
+  if (w==="fog")  p.ga *= 0.45;
+  if (w==="snow") p.ga *= 0.70;
+  return p;
+}
+
+const SKY = {
+  night:     ["#0b0f1c","#141a2b"], dawn:["#4a3a4a","#c98a72"], morning:["#9fb9d8","#cfdae6"],
+  midday:    ["#8fb2da","#c9d9ea"], afternoon:["#a6bcd6","#e0dcc9"], dusk:["#3f4a6e","#e08a5c"],
+  evening:   ["#1a2135","#2d3550"]
+};
+
+function skyFor(d, w){
+  const b = hourBand(d);
+  let c = (SKY[b] || SKY.midday).slice();
+  if (w==="cloud"){ c = b==="night"||b==="evening" ? ["#171a22","#232732"] : ["#9a9a97","#c2c1bb"]; }
+  if (w==="rain"){  c = b==="night"||b==="evening" ? ["#12151c","#1d222b"] : ["#7f858b","#a3a8ab"]; }
+  if (w==="fog"){   c = b==="night"||b==="evening" ? ["#1b1e24","#272b31"] : ["#c3c4c0","#d7d7d1"]; }
+  if (w==="snow"){  c = b==="night"||b==="evening" ? ["#20242e","#2e3340"] : ["#c8cbd0","#dfe1e3"]; }
+  return c;
+}
+
+/* ---------- drawing ---------- */
+
+function render(){
+  if (!state) return;
+  const now = new Date();
+  const w = weatherOf(now);
+  const P = palette(now, w);
+  const t = anim;
+
+  cx.clearRect(0,0,W,H);
+  wall(P);
+  doorway(P);
+  windowPane(P, now, w);
+  wallMark(P);
+  floor(P);
+  lightPatch(P, now, w);
+  wearMarks(P);
+
+  const items = [];
+  items.push({v:CHAIRS[state.chair|0].v, f:()=>chair(P)});
+  for (const o of state.objects) items.push({v:o.v, o, f:()=>thing(P,o,t)});
+  if (!state.pos.at) items.push({v:state.pos.v, f:()=>creature(P)});
+  items.sort((a,b)=>a.v-b.v).forEach(i=>i.f());
+  if (state.pos.at) creature(P);
+
+  note(P, t);
+  firstLine(P);
+  vignette(P);
+}
+
+function wall(P){
+  const g = cx.createLinearGradient(0,0,0,G.hz);
+  g.addColorStop(0,P.wt); g.addColorStop(1,P.wb);
+  cx.fillStyle = g; cx.fillRect(0,0,W,G.hz+1);
+  /* a little unevenness in the plaster */
+  const r = rngFrom(0x5eed);
+  cx.save(); cx.globalAlpha = 0.032; cx.fillStyle = P.sil;
+  const grain = Math.max(0.6, Math.min(W,H)/700);
+  for (let i=0;i<90;i++){
+    const x=r()*W, y=r()*G.hz, s=grain*(0.9+r()*1.5);
+    cx.fillRect(x,y,s,s);
+  }
+  cx.restore();
+}
+
+function doorway(P){
+  const d = G.door;
+  cx.save();
+  cx.fillStyle = shade(P.wb,-0.15); cx.fillRect(d.x, d.y, d.w, d.h);
+  cx.strokeStyle = shade(P.wb,-0.38); cx.lineWidth = Math.max(1.5, W*0.0022);
+  cx.strokeRect(d.x, d.y, d.w, d.h);
+  cx.fillStyle = shade(P.wb,-0.08);
+  cx.fillRect(d.x+d.w*0.14, d.y+d.h*0.09, d.w*0.72, d.h*0.34);
+  cx.fillRect(d.x+d.w*0.14, d.y+d.h*0.52, d.w*0.72, d.h*0.37);
+  cx.strokeStyle = shade(P.wb,-0.30); cx.lineWidth = 1;
+  cx.strokeRect(d.x+d.w*0.14, d.y+d.h*0.09, d.w*0.72, d.h*0.34);
+  cx.strokeRect(d.x+d.w*0.14, d.y+d.h*0.52, d.w*0.72, d.h*0.37);
+  cx.beginPath(); cx.arc(d.x+d.w*0.90, d.y+d.h*0.54, Math.max(2, W*0.0035), 0, 7);
+  cx.fillStyle = shade(P.wb,0.16); cx.fill();
+  cx.restore();
+}
+
+function windowPane(P, now, w){
+  const win = G.win, sky = skyFor(now, w);
+  cx.save();
+  const g = cx.createLinearGradient(0,win.y,0,win.y+win.h);
+  g.addColorStop(0,sky[0]); g.addColorStop(1,sky[1]);
+  cx.fillStyle = g; cx.fillRect(win.x, win.y, win.w, win.h);
+
+  cx.save();
+  cx.beginPath(); cx.rect(win.x,win.y,win.w,win.h); cx.clip();
+
+  const band = hourBand(now);
+  const dark = band==="night"||band==="evening";
+
+  if (dark && (w==="clear"||w==="wind")){
+    const r = rngFrom(hash32(dayIndex(now)));
+    cx.fillStyle = "rgba(255,255,255,0.7)";
+    for (let i=0;i<26;i++){
+      const x = win.x + r()*win.w, y = win.y + r()*win.h*0.75;
+      const s = r()<0.15 ? 1.7 : 1.0;
+      cx.globalAlpha = 0.3 + r()*0.55;
+      cx.fillRect(x,y,s,s);
+    }
+    cx.globalAlpha = 1;
+  }
+
+  /* sun or moon, placed by the actual hour */
+  const h = now.getHours() + now.getMinutes()/60;
+  if (!dark && (w==="clear"||w==="wind"||w==="snow")){
+    const p = Math.min(1,Math.max(0,(h-5)/(20-5)));
+    const sx = win.x + win.w*(0.12+0.76*p);
+    const sy = win.y + win.h*(0.62 - 0.44*Math.sin(Math.PI*p));
+    const rr = win.w*0.075;
+    const gg = cx.createRadialGradient(sx,sy,0,sx,sy,rr*4.5);
+    gg.addColorStop(0,"rgba(255,250,225,0.95)"); gg.addColorStop(0.25,"rgba(255,240,200,0.35)"); gg.addColorStop(1,"rgba(255,240,200,0)");
+    cx.fillStyle = gg; cx.beginPath(); cx.arc(sx,sy,rr*4.5,0,7); cx.fill();
+    cx.fillStyle = "rgba(255,253,240,0.95)"; cx.beginPath(); cx.arc(sx,sy,rr,0,7); cx.fill();
+  } else if (dark && (w==="clear"||w==="wind")){
+    const mx = win.x + win.w*0.68, my = win.y + win.h*0.26, rr = win.w*0.055;
+    const ph = (dayIndex(now) % 30) / 30;
+    cx.fillStyle = "rgba(236,238,230,0.9)";
+    cx.beginPath(); cx.arc(mx,my,rr,0,7); cx.fill();
+    cx.globalCompositeOperation = "destination-out";
+    cx.beginPath(); cx.arc(mx + rr*(ph<0.5 ? -1.1+2.2*ph*2*0.55 : 1.2-2.4*(ph-0.5)), my, rr*1.02, 0, 7); cx.fill();
+    cx.globalCompositeOperation = "source-over";
+  }
+
+  branch(P, now);
+
+  if (w==="rain"){
+    cx.strokeStyle = "rgba(255,255,255,0.22)"; cx.lineWidth = 1;
+    const r = rngFrom(hash32(dayIndex(now)*7+3));
+    for (let i=0;i<70;i++){
+      const x = win.x + r()*win.w, y = win.y + r()*win.h, l = 7+r()*13;
+      cx.beginPath(); cx.moveTo(x,y); cx.lineTo(x-l*0.28, y+l); cx.stroke();
+    }
+  }
+  if (w==="snow"){
+    const r = rngFrom(hash32(dayIndex(now)*11+5));
+    cx.fillStyle = "rgba(255,255,255,0.75)";
+    for (let i=0;i<58;i++){
+      const x = win.x + r()*win.w, y = win.y + r()*win.h, s = 1+r()*2.2;
+      cx.globalAlpha = 0.35+r()*0.5;
+      cx.beginPath(); cx.arc(x,y,s,0,7); cx.fill();
+    }
+    cx.globalAlpha=1;
+  }
+  if (w==="fog"){
+    cx.fillStyle = "rgba(232,232,228,0.42)"; cx.fillRect(win.x,win.y,win.w,win.h);
+  }
+  cx.restore();
+
+  /* frame + bars + sill */
+  const fw = Math.max(3, W*0.0075);
+  cx.strokeStyle = shade(P.wb,-0.40); cx.lineWidth = fw;
+  cx.strokeRect(win.x, win.y, win.w, win.h);
+  cx.lineWidth = Math.max(2, fw*0.6);
+  cx.beginPath();
+  cx.moveTo(win.x+win.w/2, win.y); cx.lineTo(win.x+win.w/2, win.y+win.h);
+  cx.moveTo(win.x, win.y+win.h*0.5); cx.lineTo(win.x+win.w, win.y+win.h*0.5);
+  cx.stroke();
+  cx.fillStyle = shade(P.wb,-0.30);
+  cx.fillRect(win.x-fw*1.6, win.y+win.h, win.w+fw*3.2, fw*1.5);
+  cx.restore();
+}
+
+function branch(P, now){
+  const s = seasonOf(now), win = G.win;
+  cx.save();
+  cx.strokeStyle = "rgba(20,18,16,0.62)";
+  const base = {x: win.x+win.w*1.02, y: win.y+win.h*0.08};
+  const lw = Math.max(1.6, win.w*0.014);
+  cx.lineWidth = lw; cx.lineCap="round";
+  cx.beginPath();
+  cx.moveTo(base.x, base.y);
+  cx.bezierCurveTo(win.x+win.w*0.72, win.y+win.h*0.12, win.x+win.w*0.55, win.y+win.h*0.30, win.x+win.w*0.16, win.y+win.h*0.24);
+  cx.stroke();
+  const twigs = [[0.74,0.13,0.66,0.02],[0.58,0.26,0.48,0.06],[0.42,0.28,0.36,0.44],[0.28,0.26,0.20,0.10]];
+  cx.lineWidth = lw*0.55;
+  for (const t of twigs){
+    cx.beginPath();
+    cx.moveTo(win.x+win.w*t[0], win.y+win.h*t[1]);
+    cx.lineTo(win.x+win.w*t[2], win.y+win.h*t[3]);
+    cx.stroke();
+  }
+  const r = rngFrom(0xbeef);
+  const put = (col, n, size)=>{
+    cx.fillStyle = col;
+    for (let i=0;i<n;i++){
+      const tt = r();
+      const x = win.x+win.w*(0.16+0.86*tt) + (r()-0.5)*win.w*0.08;
+      const y = win.y+win.h*(0.24-0.14*tt) + (r()-0.5)*win.h*0.16;
+      cx.beginPath(); cx.ellipse(x,y,size*(0.7+r()*0.6),size*(0.45+r()*0.4),r()*3,0,7); cx.fill();
+    }
+  };
+  if (s==="spring") put("rgba(70,86,58,0.72)", 26, win.w*0.016);
+  if (s==="summer") put("rgba(38,52,34,0.8)", 54, win.w*0.024);
+  if (s==="autumn") put("rgba(122,84,38,0.75)", 18, win.w*0.020);
+  cx.restore();
+}
+
+function wallMark(P){
+  if (!state.mark) return;
+  const win = G.win;
+  cx.save();
+  cx.strokeStyle = shade(P.wb,-0.45); cx.lineWidth = Math.max(1, W*0.0016);
+  cx.globalAlpha = 0.8;
+  const x = win.x + win.w + W*0.028, y = win.y + win.h*0.66, s = Math.max(6, W*0.011);
+  cx.lineCap = "round";
+  cx.beginPath();
+  cx.moveTo(x-s*0.42, y-s*0.55); cx.quadraticCurveTo(x+s*0.1, y+s*0.05, x+s*0.34, y+s*0.62);
+  cx.moveTo(x+s*0.30, y-s*0.34); cx.quadraticCurveTo(x-s*0.02, y+s*0.02, x-s*0.30, y+s*0.30);
+  cx.stroke();
+  cx.restore();
+}
+
+function floor(P){
+  const g = cx.createLinearGradient(0,G.hz,0,H);
+  g.addColorStop(0,P.ff); g.addColorStop(1,P.fn);
+  cx.fillStyle = g; cx.fillRect(0,G.hz,W,H-G.hz);
+
+  /* boards, converging a little */
+  cx.save();
+  cx.strokeStyle = shade(P.fn,-0.14); cx.lineWidth = 1;
+  cx.globalAlpha = 0.55;
+  for (let i=-6;i<=6;i++){
+    const uTop = 0.5 + i*0.085, uBot = 0.5 + i*0.165;
+    const b = pt(uBot, 1.02);
+    cx.beginPath(); cx.moveTo(pt(uTop,0).x, G.hz); cx.lineTo(b.x, H+4); cx.stroke();
+  }
+  /* plank ends, scattered — floorboards, not tiles */
+  const r = rngFrom(0x0f100d);
+  cx.globalAlpha = 0.30;
+  for (let i=0;i<26;i++){
+    const v = 0.05 + r()*0.98, u = -0.5 + r()*2;
+    const a = pt(u-0.07, v), b = pt(u+0.07, v);
+    cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
+  }
+  cx.restore();
+
+  /* skirting, so the room has a corner in it */
+  cx.save();
+  cx.fillStyle = shade(P.wb, -0.16);
+  cx.fillRect(0, G.hz - Math.max(3,H*0.011), W, Math.max(3,H*0.011));
+  cx.globalAlpha = 0.5; cx.fillStyle = shade(P.wb,-0.34);
+  cx.fillRect(0, G.hz-1, W, 1.5);
+  cx.restore();
+}
+
+function lightPatch(P, now, w){
+  if (P.ga <= 0.02) return;
+  const win = G.win;
+  const h = now.getHours() + now.getMinutes()/60;
+  const p = Math.min(1, Math.max(0, (h-5)/15));
+  const shift = (0.5-p) * W*0.28;
+  cx.save();
+  cx.globalCompositeOperation = "lighter";
+  const cxp = win.x + win.w/2 + shift, cyp = G.hz + (H-G.hz)*0.42;
+  const g = cx.createRadialGradient(cxp, cyp, 0, cxp, cyp, win.w*1.5);
+  g.addColorStop(0,"rgba("+P.glow+","+P.ga+")");
+  g.addColorStop(0.55,"rgba("+P.glow+","+(P.ga*0.42)+")");
+  g.addColorStop(1,"rgba("+P.glow+",0)");
+  cx.fillStyle = g;
+  cx.save();
+  cx.translate(cxp, cyp); cx.scale(1, 0.48); cx.translate(-cxp,-cyp);
+  cx.beginPath(); cx.arc(cxp, cyp, win.w*1.5, 0, 7); cx.fill();
+  cx.restore();
+  /* and the shape of the window on the wall, feathered, barely there */
+  const wx = win.x - shift*1.6 - win.w*1.15, wwid = win.w*0.85;
+  const wg = cx.createLinearGradient(wx, 0, wx+wwid, 0);
+  wg.addColorStop(0,   "rgba("+P.glow+",0)");
+  wg.addColorStop(0.3, "rgba("+P.glow+","+(P.ga*0.30)+")");
+  wg.addColorStop(0.7, "rgba("+P.glow+","+(P.ga*0.30)+")");
+  wg.addColorStop(1,   "rgba("+P.glow+",0)");
+  cx.fillStyle = wg;
+  cx.beginPath();
+  cx.moveTo(wx, win.y+win.h*0.22); cx.lineTo(wx+wwid, win.y+win.h*0.02);
+  cx.lineTo(wx+wwid, win.y+win.h*0.98); cx.lineTo(wx, win.y+win.h*1.18);
+  cx.closePath(); cx.fill();
+  cx.restore();
+}
+
+function wearMarks(P){
+  cx.save();
+  for (const k in state.wear){
+    const v = state.wear[k]; if (v < 0.03) continue;
+    const idx = +k, gx = idx % GX, gy = (idx / GX)|0;
+    const p = pt(gx/(GX-1), gy/(GY-1));
+    const rr = 34*p.s;
+    const g = cx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+    const a = Math.min(0.13, v*0.13);
+    g.addColorStop(0, "rgba(0,0,0,"+a+")");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    cx.fillStyle = g;
+    cx.save();
+    cx.translate(p.x, p.y); cx.scale(1, 0.40); cx.translate(-p.x, -p.y);
+    cx.beginPath(); cx.arc(p.x, p.y, rr, 0, 7); cx.fill();
+    cx.restore();
+  }
+  cx.restore();
+}
+
+function chair(P){
+  const c = CHAIRS[state.chair|0], p = pt(c.u, c.v), s = p.s;
+  cx.save();
+  cx.translate(p.x, p.y); cx.scale(s,s);
+  cx.strokeStyle = P.sil; cx.globalAlpha = 0.82;
+  cx.lineWidth = 3.4; cx.lineCap = "round"; cx.lineJoin="round";
+  const seatY = -46, w2 = 30, d = 13;
+  cx.beginPath();
+  cx.moveTo(-w2, seatY); cx.lineTo(w2, seatY);
+  cx.lineTo(w2-d, seatY-d*0.55); cx.lineTo(-w2-d, seatY-d*0.55); cx.closePath();
+  cx.stroke();
+  cx.beginPath();
+  cx.moveTo(-w2, seatY); cx.lineTo(-w2+2, 0);
+  cx.moveTo(w2, seatY); cx.lineTo(w2-2, 0);
+  cx.moveTo(-w2-d, seatY-d*0.55); cx.lineTo(-w2-d+2, -d*0.6);
+  cx.moveTo(w2-d, seatY-d*0.55); cx.lineTo(w2-d-1, -d*0.6);
+  cx.stroke();
+  cx.beginPath();
+  cx.moveTo(-w2-d, seatY-d*0.55); cx.lineTo(-w2-d+1, seatY-52);
+  cx.moveTo(w2-d, seatY-d*0.55); cx.lineTo(w2-d-1, seatY-52);
+  cx.moveTo(-w2-d+1, seatY-44); cx.lineTo(w2-d-1, seatY-44);
+  cx.moveTo(-w2-d+1, seatY-30); cx.lineTo(w2-d-1, seatY-30);
+  cx.stroke();
+  cx.restore();
+}
+
+/* ---------- the shape ---------- */
+/* it is never legible. no face, no eyes, nothing that follows you.
+   the contour is seeded from this save, so it is your own. */
+function creature(P){
+  const pos = state.pos;
+  let p, s, sil = P.sil;
+  if (pos.at === "sill"){
+    const win = G.win;
+    p = {x: win.x + win.w*0.30, y: win.y + win.h + Math.max(3,W*0.0075)*0.4};
+    s = 0.52;
+  } else if (pos.at === "out"){
+    const win = G.win;
+    p = {x: win.x + win.w*0.74, y: win.y + win.h*0.86};
+    s = 0.30;
+    sil = "rgba(15,16,20,0.72)";
+  } else {
+    const q = pt(pos.u, pos.v); p = {x:q.x, y:q.y}; s = q.s;
+  }
+
+  const r = rngFrom(hash32((state.born|0) ^ 0x2f1e));
+  const wob = [];
+  for (let i=0;i<8;i++) wob.push((r()-0.5)*0.13);
+
+  const pose = pos.pose || "settled";
+  const crouch = pose==="curl" ? 1 : pose==="settled" ? 0.42 : pose==="lean" ? 0.3 : 0;
+  const lean   = pose==="lean" ? (pos.u > 0.5 ? 0.34 : -0.34) : (pose==="up" ? 0.06 : 0);
+
+  const hh = 88*s*(1-0.34*crouch);
+  const ww = 48*s*(1+0.26*crouch);
+
+  cx.save();
+  /* contact shadow, so it belongs to the floor */
+  if (!pos.at){
+    cx.globalAlpha = 0.20; cx.fillStyle = sil;
+    cx.beginPath(); cx.ellipse(p.x, p.y+1, ww*0.62, ww*0.19, 0, 0, 7); cx.fill();
+    cx.globalAlpha = 1;
+  }
+  cx.translate(p.x, p.y);
+
+  const X = (f)=> ww*f, Y = (f)=> -hh*f;
+  const body = new Path2D();
+  /* one end rises higher than the other, with a shallow saddle between.
+     it reads as a living thing and as no animal in particular. */
+  body.moveTo(X(-0.54+wob[0]*0.3), Y(0));
+  body.bezierCurveTo(X(-0.62), Y(0.30+wob[1]), X(-0.52+lean*0.4), Y(0.72), X(-0.30+lean*0.9), Y(0.94+wob[2]*0.2));
+  body.bezierCurveTo(X(-0.20+lean), Y(1.03), X(-0.02+lean), Y(1.02), X(0.04+lean*0.8), Y(0.86+wob[3]*0.2));
+  body.bezierCurveTo(X(0.09+lean*0.6), Y(0.74), X(0.13+lean*0.4), Y(0.70+wob[4]*0.2), X(0.20+lean*0.3), Y(0.72));
+  body.bezierCurveTo(X(0.34), Y(0.75+wob[5]*0.2), X(0.48), Y(0.60), X(0.53), Y(0.38+wob[6]));
+  body.bezierCurveTo(X(0.58), Y(0.20), X(0.60), Y(0.05), X(0.50), Y(0.005));
+  body.bezierCurveTo(X(0.20), Y(-0.012), X(-0.26), Y(-0.012), X(-0.54+wob[0]*0.3), Y(0));
+  body.closePath();
+  cx.fillStyle = sil;
+  cx.fill(body);
+
+  /* the window catches one edge of it. it is still a silhouette. */
+  cx.save();
+  cx.clip(body);
+  cx.globalCompositeOperation = "lighter";
+  const rim = cx.createLinearGradient(X(0.75), Y(1.1), X(-0.35), Y(0.05));
+  rim.addColorStop(0, "rgba("+P.glow+","+(0.10 + P.ga*0.35)+")");
+  rim.addColorStop(0.5, "rgba("+P.glow+",0.018)");
+  rim.addColorStop(1, "rgba("+P.glow+",0)");
+  cx.fillStyle = rim;
+  cx.fillRect(X(-0.8), Y(1.3), ww*1.6, hh*1.4);
+  cx.restore();
+
+  if (pose === "up"){
+    cx.strokeStyle = sil; cx.lineWidth = Math.max(1.4, 3.1*s); cx.lineCap="round";
+    cx.beginPath();
+    cx.moveTo(X(-0.30), Y(0.10)); cx.lineTo(X(-0.34), Y(-0.14));
+    cx.moveTo(X(0.16), Y(0.10)); cx.lineTo(X(0.21), Y(-0.14));
+    cx.stroke();
+    cx.translate(0, hh*0.14);
+  }
+  cx.restore();
+}
+
+/* ---------- things ---------- */
+function thing(P, o, t){
+  const p = pt(o.u, o.v);
+  const isNew = freshIds.indexOf(o.id) >= 0;
+  const a = isNew ? clamp((t-0.25)/0.55) : 1;
+  if (a <= 0) return;
+  const drop = isNew ? (1-a)*7 : 0;
+  cx.save();
+  cx.globalAlpha = a;
+  cx.translate(p.x, p.y - drop);
+  const sc = p.s*1.35;
+  cx.globalAlpha = a*0.18; cx.fillStyle = P.sil;
+  cx.beginPath(); cx.ellipse(0, 1, 15*sc, 5*sc, 0, 0, 7); cx.fill();
+  cx.globalAlpha = a;
+  cx.rotate(o.a*0.25);
+  cx.scale(sc, sc);
+  cx.strokeStyle = P.sil; cx.fillStyle = P.sil;
+  cx.lineWidth = 2.0; cx.lineJoin="round"; cx.lineCap="round";
+  drawThing(o.k, P);
+  cx.restore();
+}
+
+function drawThing(k, P){
+  const c = cx;
+  switch(k){
+    case "stone":
+      c.beginPath();
+      c.moveTo(-13,0); c.bezierCurveTo(-14,-9,-6,-14,2,-13);
+      c.bezierCurveTo(11,-12,15,-6,13,0); c.closePath(); c.fill();
+      c.globalCompositeOperation="destination-out";
+      c.beginPath(); c.ellipse(0,-6,3.4,2.6,0.3,0,7); c.fill();
+      c.globalCompositeOperation="source-over";
+      break;
+    case "leaf":
+      c.beginPath();
+      c.moveTo(-15,2); c.bezierCurveTo(-8,-14,10,-16,16,-4);
+      c.bezierCurveTo(8,4,-6,7,-15,2); c.closePath(); c.fill();
+      c.strokeStyle = "rgba(255,255,255,0.28)"; c.lineWidth=1.4;
+      c.beginPath(); c.moveTo(-14,2); c.lineTo(14,-5); c.stroke();
+      break;
+    case "feather":
+      c.beginPath();
+      c.moveTo(-16,4); c.bezierCurveTo(-6,-12,8,-16,17,-13);
+      c.bezierCurveTo(10,-2,-2,6,-16,4); c.closePath();
+      c.globalAlpha *= 0.8; c.fill(); c.globalAlpha /= 0.8;
+      c.lineWidth=1.6; c.beginPath(); c.moveTo(-17,5); c.bezierCurveTo(-6,-8,8,-13,18,-14); c.stroke();
+      break;
+    case "key":
+      c.lineWidth=2.4;
+      c.beginPath(); c.arc(-9,-7,5.2,0,7); c.stroke();
+      c.beginPath(); c.moveTo(-4,-5); c.lineTo(14,-1);
+      c.moveTo(9,-2); c.lineTo(9,4); c.moveTo(13,-1); c.lineTo(13,4); c.stroke();
+      break;
+    case "shell":
+      c.beginPath(); c.moveTo(0,2);
+      for (let i=0;i<34;i++){ const a=i*0.42, rr=1.1+i*0.44; c.lineTo(Math.cos(a)*rr, 2-Math.sin(a)*rr*0.72); }
+      c.lineWidth=1.7; c.stroke();
+      break;
+    case "cone":
+      c.beginPath(); c.moveTo(0,-16); c.bezierCurveTo(8,-10,8,2,0,4); c.bezierCurveTo(-8,2,-8,-10,0,-16); c.fill();
+      c.strokeStyle="rgba(255,255,255,0.22)"; c.lineWidth=1.1;
+      for(let i=-12;i<3;i+=4){ c.beginPath(); c.moveTo(-6,i); c.lineTo(6,i+2); c.stroke(); }
+      break;
+    case "spool":
+      c.fillRect(-9,-14,18,3.4); c.fillRect(-9,-1,18,3.4);
+      c.fillRect(-4,-12,8,12);
+      c.lineWidth=1.4; c.beginPath(); c.moveTo(4,-9); c.bezierCurveTo(14,-7,12,0,3,-1); c.stroke();
+      break;
+    case "cap":
+      c.beginPath(); c.ellipse(0,-2,12,5.5,0.15,0,7); c.fill();
+      c.globalCompositeOperation="destination-out";
+      c.beginPath(); c.ellipse(0,-3,7,3,0.15,0,7); c.fill();
+      c.globalCompositeOperation="source-over";
+      break;
+    case "fold":
+      c.beginPath(); c.moveTo(-11,2); c.lineTo(-7,-11); c.lineTo(11,-8); c.lineTo(8,4); c.closePath();
+      c.globalAlpha*=0.55; c.fill(); c.globalAlpha/=0.55;
+      c.lineWidth=1.6; c.stroke();
+      c.beginPath(); c.moveTo(-7,-11); c.lineTo(3,-2); c.lineTo(8,4); c.stroke();
+      break;
+    case "twig":
+      c.lineWidth=2.6; c.beginPath(); c.moveTo(-17,3); c.bezierCurveTo(-5,-3,6,-6,17,-9); c.stroke();
+      c.lineWidth=1.6; c.beginPath(); c.moveTo(1,-4); c.lineTo(6,-12); c.moveTo(-8,0); c.lineTo(-12,-7); c.stroke();
+      break;
+    case "glass":
+      c.globalAlpha*=0.5;
+      c.beginPath(); c.moveTo(-10,3); c.lineTo(-3,-12); c.lineTo(9,-6); c.lineTo(6,4); c.closePath(); c.fill();
+      c.globalAlpha/=0.5; c.lineWidth=1.3; c.stroke();
+      break;
+    case "nail":
+      c.lineWidth=2.6; c.beginPath(); c.moveTo(-13,1); c.lineTo(4,-4); c.lineTo(11,-12); c.stroke();
+      c.lineWidth=4.4; c.beginPath(); c.moveTo(-14,1); c.lineTo(-11,0); c.stroke();
+      break;
+    case "stack":
+      c.beginPath(); c.ellipse(0,0,12,4.6,0,0,7); c.fill();
+      c.beginPath(); c.ellipse(1,-8,9,4,0.1,0,7); c.fill();
+      c.beginPath(); c.ellipse(-1,-15,6,3.2,-0.15,0,7); c.fill();
+      break;
+    case "knot":
+      c.lineWidth=2.4;
+      c.beginPath();
+      c.moveTo(-16,4); c.bezierCurveTo(-6,4,-10,-10,-1,-9);
+      c.bezierCurveTo(8,-8,3,4,10,0); c.bezierCurveTo(14,-2,15,-6,17,-7);
+      c.stroke();
+      break;
+    case "boat":
+      c.beginPath(); c.moveTo(-14,2); c.lineTo(14,2); c.lineTo(9,-4); c.lineTo(-9,-4); c.closePath();
+      c.globalAlpha*=0.6; c.fill(); c.globalAlpha/=0.6; c.lineWidth=1.6; c.stroke();
+      c.beginPath(); c.moveTo(-7,-4); c.lineTo(0,-16); c.lineTo(7,-4); c.stroke();
+      break;
+    case "ring":
+      c.lineWidth=2.2; c.beginPath(); c.arc(0,-7,9,0.5,6.0); c.stroke();
+      c.beginPath(); c.moveTo(7,-2); c.lineTo(13,2); c.stroke();
+      break;
+    case "ticket":
+      c.beginPath(); c.moveTo(-14,3); c.lineTo(-14,-8); c.lineTo(10,-10); c.lineTo(12,2); c.closePath();
+      c.globalAlpha*=0.5; c.fill(); c.globalAlpha/=0.5; c.lineWidth=1.4; c.stroke();
+      c.lineWidth=1.1;
+      c.beginPath(); c.moveTo(-9,-5); c.lineTo(4,-6); c.moveTo(-9,-1); c.lineTo(2,-2); c.stroke();
+      c.setLineDash([2,2]); c.beginPath(); c.moveTo(6,-9); c.lineTo(8,2); c.stroke(); c.setLineDash([]);
+      break;
+    case "flower":
+      c.lineWidth=1.5; c.beginPath(); c.moveTo(0,4); c.lineTo(-1,-6); c.stroke();
+      for (let i=0;i<5;i++){
+        const a = i*1.256 - 1.4;
+        c.beginPath(); c.ellipse(-1+Math.cos(a)*5.5, -8+Math.sin(a)*5, 4.2, 2.6, a, 0, 7);
+        c.globalAlpha*=0.75; c.fill(); c.globalAlpha/=0.75;
+      }
+      break;
+    case "tile":
+      c.beginPath(); c.rect(-11,-13,22,17); c.globalAlpha*=0.35; c.fill(); c.globalAlpha/=0.35;
+      c.lineWidth=1.5; c.stroke();
+      c.lineWidth=1.3;
+      c.beginPath(); c.arc(0,-4.5,5.5,0,7); c.stroke();
+      c.beginPath(); c.moveTo(-11,-13); c.lineTo(11,4); c.moveTo(11,-13); c.lineTo(-11,4); c.stroke();
+      break;
+    case "coin":
+      c.beginPath(); c.ellipse(0,-5,9,8.6,0,0,7); c.fill();
+      c.globalCompositeOperation="destination-out";
+      c.lineWidth=1.6; c.beginPath(); c.arc(0,-5,5.2,0,7); c.stroke();
+      c.beginPath(); c.moveTo(-3,-5); c.lineTo(3,-5); c.stroke();
+      c.globalCompositeOperation="source-over";
+      break;
+    case "chip":
+      c.beginPath(); c.moveTo(-12,3); c.lineTo(-9,-10); c.lineTo(7,-12); c.lineTo(11,1); c.closePath(); c.fill();
+      c.strokeStyle="rgba(120,150,180,0.75)"; c.lineWidth=2.2;
+      c.beginPath(); c.moveTo(-9,-8); c.lineTo(6,-10); c.stroke();
+      break;
+    case "gift":
+      /* the only colour in the room */
+      c.save();
+      c.scale(1.3,1.3);
+      c.fillStyle = "#2f6ea6"; c.strokeStyle = "#2f6ea6";
+      c.shadowColor = "rgba(47,110,166,0.55)"; c.shadowBlur = 16;
+      c.beginPath();
+      c.moveTo(0,-19); c.lineTo(9,-10); c.lineTo(11,3); c.lineTo(0,7); c.lineTo(-11,3); c.lineTo(-9,-10);
+      c.closePath(); c.fill();
+      c.shadowBlur = 0;
+      c.fillStyle = "rgba(255,255,255,0.35)";
+      c.beginPath(); c.moveTo(0,-19); c.lineTo(9,-10); c.lineTo(0,-6); c.closePath(); c.fill();
+      c.restore();
+      break;
+    default:
+      c.beginPath(); c.arc(0,-5,7,0,7); c.fill();
+  }
+}
+
+/* ---------- the note ---------- */
+
+function noteFont(px){ return px+"px ui-serif, Georgia, 'Iowan Old Style', Palatino, 'Times New Roman', serif"; }
+
+function wrap(text, maxW, fs){
+  cx.font = noteFont(fs);
+  const out = [];
+  for (const para of String(text).split("\n")){
+    if (!para.length){ out.push(""); continue; }
+    let line = "";
+    for (const word of para.split(" ")){
+      const t = line ? line+" "+word : word;
+      if (cx.measureText(t).width > maxW && line){ out.push(line); line = word; }
+      else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+function note(P, t){
+  const n = state.note;
+  if (!n || !n.lines) return;
+  let text = n.lines;
+  if (n.watched){
+    for (let i=0;i<n.watched && i<NOTES.watching.length;i++){
+      text += (text ? "\n\n" : "") + NOTES.watching[i];
+    }
+  }
+  if (!text) return;
+
+  const long = n.kind === "letter" || n.kind === "month";
+  /* whatever it says has to fit on the paper, and the paper on the screen. */
+  const wide = W > 620;
+  let fs = Math.max(13, Math.min(20, Math.min(W*0.040, H*0.030)));
+  let lines, lh, pad, tw = 0, pw = 0, ph = 0;
+  for (let guard=0; guard<16; guard++){
+    const frac = long ? (wide ? 0.55 : 0.86) : (wide ? 0.42 : 0.78);
+    const maxW = Math.min(W*Math.min(0.88, frac + guard*0.025), long ? 640 : 460);
+    lines = wrap(text, maxW, fs);
+    lh = fs*1.62; pad = fs*1.5;
+    tw = 0; for (const l of lines) tw = Math.max(tw, cx.measureText(l).width);
+    pw = Math.min(W*0.94, tw + pad*2);
+    ph = lines.length*lh + pad*2 - lh*0.35;
+    if ((ph <= H*0.80 && pw <= W*0.94) || fs <= 10.5) break;
+    fs *= 0.93;
+  }
+
+  /* it lies where it doesn't cover whatever it just brought in */
+  let avoid = state.pos.at ? 0.80 : state.pos.u;
+  const newest = state.objects.filter(o=>freshIds.indexOf(o.id) >= 0).pop();
+  if (newest) avoid = newest.u;
+  /* a long one keeps off the window, so you can still see what it's describing */
+  let cxp = (long && wide) ? (avoid < 0.42 ? W*0.66 : W*0.34)
+                           : (avoid < 0.5  ? W*0.68 : W*0.32);
+  let cyp = long ? H*(n.kind === "month" ? 0.45 : 0.55)
+                 : Math.min(pt(0,0.86).y, H - ph/2 - H*0.03);
+  cxp = Math.min(W - pw/2 - W*0.02, Math.max(pw/2 + W*0.02, cxp));
+  cyp = Math.min(H - ph/2 - H*0.02, Math.max(ph/2 + H*0.02, cyp));
+
+  /* the one coloured thing never gets covered up */
+  const gift = state.objects.find(o=>o.k === "gift");
+  if (gift){
+    const gp = pt(gift.u, gift.v), gr = 44*gp.s;
+    if (Math.abs(gp.x-cxp) < pw/2 + gr && Math.abs(gp.y-cyp) < ph/2 + gr){
+      cyp = Math.max(ph/2 + H*0.02, Math.min(cyp, gp.y - gr - ph/2 - H*0.03));
+    }
+  }
+
+  const rot = ((hash32(n.at|0) % 100)/100 - 0.5) * (long ? 0.022 : 0.055);
+  const a = clamp((t-0.45)/0.55);
+
+  cx.save();
+  cx.globalAlpha = a;
+  cx.translate(cxp, cyp); cx.rotate(rot);
+  cx.shadowColor = "rgba(0,0,0,0.35)"; cx.shadowBlur = 18; cx.shadowOffsetY = 5;
+  cx.fillStyle = P.paper;
+  cx.beginPath();
+  roundRect(-pw/2, -ph/2, pw, ph, 2);
+  cx.fill();
+  cx.shadowBlur = 0; cx.shadowOffsetY = 0;
+
+  cx.fillStyle = "rgba(0,0,0,0.05)";
+  cx.fillRect(-pw/2, ph/2-2, pw, 2);
+
+  cx.fillStyle = P.pink;
+  cx.font = noteFont(fs);
+  cx.textBaseline = "top";
+  const r = rngFrom(hash32(n.at|0));
+  let y = -ph/2 + pad - lh*0.18;
+  for (const l of lines){
+    if (l) cx.fillText(l, -pw/2 + pad + (r()-0.5)*1.4, y + (r()-0.5)*0.9);
+    y += lh;
+  }
+  cx.restore();
+}
+
+function roundRect(x,y,w,h,r){
+  cx.moveTo(x+r,y); cx.lineTo(x+w-r,y); cx.quadraticCurveTo(x+w,y,x+w,y+r);
+  cx.lineTo(x+w,y+h-r); cx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  cx.lineTo(x+r,y+h); cx.quadraticCurveTo(x,y+h,x,y+h-r);
+  cx.lineTo(x,y+r); cx.quadraticCurveTo(x,y,x+r,y);
+}
+
+function firstLine(P){
+  if (state.told) return;
+  const fs = Math.max(13, Math.min(18, H*0.024));
+  cx.save();
+  cx.font = noteFont(fs);
+  cx.globalAlpha = 0.5;
+  cx.fillStyle = P.ink;
+  cx.textBaseline = "top";
+  cx.fillText(NOTES.firstLine, W*0.07, G.hz*0.72);
+  cx.restore();
+}
+
+function vignette(P){
+  const g = cx.createRadialGradient(W/2,H*0.5,Math.min(W,H)*0.28,W/2,H*0.5,Math.max(W,H)*0.78);
+  g.addColorStop(0,"rgba(0,0,0,0)"); g.addColorStop(1,"rgba(0,0,0,0.26)");
+  cx.fillStyle = g; cx.fillRect(0,0,W,H);
+}
+
+/* multiplicative, so the same amount reads at noon and at 3am */
+function shade(hex, amt){
+  const n = parseInt(hex.slice(1),16);
+  let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  if (amt < 0){ const k = 1+amt; r*=k; g*=k; b*=k; }
+  else { r += (255-r)*amt; g += (255-g)*amt; b += (255-b)*amt; }
+  return "rgb("+Math.round(r)+","+Math.round(g)+","+Math.round(b)+")";
+}
+const clamp = (x)=> x<0?0:x>1?1:x;
+
+/* ============================ coming and going ============================ */
+
+function resize(){
+  DPR = Math.min(2.5, window.devicePixelRatio || 1);
+  W = cv.clientWidth || window.innerWidth;
+  H = cv.clientHeight || window.innerHeight;
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+  cx.setTransform(DPR,0,0,DPR,0,0);
+  geometry();
+  render();
+}
+
+function settle(){
+  if (reduced){ anim = 1; render(); return; }
+  anim = 0;
+  const t0 = performance.now();
+  cancelAnimationFrame(animRAF);
+  const step = ()=>{
+    const e = (performance.now()-t0)/720;
+    anim = e >= 1 ? 1 : 1-Math.pow(1-e, 3);
+    render();
+    if (e < 1) animRAF = requestAnimationFrame(step);
+    /* and then it is still again. nothing loops. */
+  };
+  animRAF = requestAnimationFrame(step);
+}
+
+let away = false, lastTouch = 0;
+
+function leaving(){
+  if (away || !state) return;
+  away = true;
+  state.leftAt = Date.now();
+  save(state);
+  stopWatching();
+  document.getElementById("pin").classList.remove("on");
+}
+
+let pendingFirst = false;
+
+/* first ever look: the room, the shape, one line. nothing is owed yet. */
+function beginFirst(){
+  pendingFirst = false;
+  away = false;
+  state.leftAt = Date.now();
+  save(state);
+  const pin = document.getElementById("pin");
+  setTimeout(()=>pin.classList.add("on"), 2600);
+  setTimeout(()=>pin.classList.remove("on"), 26000);
+  startWatching();
+  render();
+}
+
+function returning(){
+  if (!state) return;
+  if (pendingFirst){ beginFirst(); return; }
+  const now = Date.now();
+  const gap = now - state.leftAt;
+  away = false;
+  if (gap < 1*MIN && gap >= -2*MIN){ state.leftAt = now; save(state); startWatching(); return; }
+  const res = simulate(state, gap, now);
+  state = res.next; freshIds = res.fresh;
+  save(state);
+  settle();
+  startWatching();
+}
+
+/* it knows you are watching. three lines, then it lets it go. */
+let watchTimers = [];
+const WATCH_AT = [4*MIN, 9*MIN, 17*MIN];
+function startWatching(){
+  stopWatching();
+  if (!state) return;
+  const base = state.note ? (state.note.watched|0) : 0;
+  for (let i=base;i<WATCH_AT.length;i++){
+    watchTimers.push(setTimeout(()=>{
+      if (!state) return;
+      if (!state.note) state.note = {lines:"", at:Date.now(), kind:"watch", watched:0};
+      state.note.watched = i+1;
+      freshIds = [];
+      save(state);
+      if (reduced){ anim = 1; render(); } else settle();
+    }, WATCH_AT[i]));
+  }
+}
+function stopWatching(){ watchTimers.forEach(clearTimeout); watchTimers = []; }
+
+/* keep leftAt honest without running a timer: touch it while you are here */
+function touch(){
+  const now = Date.now();
+  if (now - lastTouch < 20e3) return;
+  lastTouch = now;
+  if (state && !away){ state.leftAt = now; save(state); }
+}
+
+document.addEventListener("visibilitychange", ()=>{
+  if (document.hidden) leaving(); else returning();
+});
+window.addEventListener("blur", leaving);
+window.addEventListener("focus", ()=>{ if (!document.hidden) returning(); });
+window.addEventListener("pagehide", leaving);
+window.addEventListener("beforeunload", leaving);
+window.addEventListener("resize", resize);
+
+cv.addEventListener("mousemove", touch);
+window.addEventListener("keydown", touch);
+cv.addEventListener("touchstart", touch, {passive:true});
+
+/* ============================ start ============================ */
+(function start(){
+  const now = Date.now();
+  const loaded = load();
+  const first = !loaded;
+  state = loaded || fresh(now);
+  resize();
+
+  pendingFirst = first;
+
+  if (document.hidden){
+    /* a pinned tab can be restored into the background. don't resolve the
+       absence where nobody can see it — wait until it is actually looked at,
+       or a week's letter gets spent on an empty room. */
+    away = true;
+    return;
+  }
+
+  if (first) beginFirst(); else returning();
+})();
+</script>
+</body>
+</html>

@@ -26,16 +26,22 @@ There is no second rule. No score, no levels, no goals, no tutorial.
 
 ## Run it
 
+### [renrenmimi.github.io/while-away](https://renrenmimi.github.io/while-away/)
+
+Then **pin the tab and go do something else.** A pinned tab survives a browser restart, which means this can live in your browser for months. That is the form this takes — not an install; a tab left open.
+
+### Or keep a copy
+
 ```bash
 curl -O https://raw.githubusercontent.com/renrenmimi/while-away/main/index.html
 open index.html
 ```
 
-Or just download the file and double-click it.
+One caveat, and it lands on exactly the part that matters most: **Safari deletes a site's local storage after seven days without a visit.** On Safari the hosted version can lose the week-letter, and cannot reach the longest threshold at all. Chrome and Firefox have no such rule. A file on your own disk has no domain, so nothing expires it.
 
-Then **pin the tab and go do something else.** A pinned tab survives a browser restart, which means this can live in your browser for months. That is the form this takes — not an install; a tab left open.
+So: **the link is how you try it, the file is how you keep it.**
 
-There is deliberately no hosted version. Serving it from a domain would put it back on somebody's servers, which is the thing it was built to avoid — and browsers evict script storage from real domains far sooner than the longest thresholds here need.
+Either way this is a distribution channel, not a dependency. The file runs whether or not GitHub does, whether or not this repository still exists, and whether or not anything is left of the internet it came from. That is the whole point.
 
 ## Time
 

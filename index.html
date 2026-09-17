@@ -273,7 +273,9 @@ const SPOTS = [
 ];
 const CHAIRS = [ {u:0.70,v:0.50}, {u:0.34,v:0.44}, {u:0.83,v:0.72} ];
 const POSES = ["settled","up","curl","lean"];
-const GX = 44, GY = 16;   /* wear grid over the floor */
+/* wear keys are y*GX+x and are NOT written into the save. changing either
+   number silently scrambles the worn path in every existing floor. */
+const GX = 44, GY = 16;
 
 function fresh(now){
   return {
@@ -293,9 +295,15 @@ function fresh(now){
   };
 }
 
+/* storage on file:// is the one thing here that no amount of care can
+   guarantee for ten years. the probe below writes and deletes, so it also
+   catches "present but blocked", not just "missing" — and when it fails the
+   piece still runs, it just forgets on close. that silence is on purpose.
+   note also that some browsers scope a file:// save to the file's exact path,
+   which makes "leave the file where it is" part of the work's instructions. */
 let store = null;
 try { store = window.localStorage; store.setItem(KEY+"/t","1"); store.removeItem(KEY+"/t"); }
-catch(e){ store = null; }
+catch(e){ store = null; }   /* deliberate: see note above about file:// storage */
 let mem = null;
 
 function load(){
@@ -304,6 +312,9 @@ function load(){
     if(!raw) return null;
     const s = JSON.parse(raw);
     if(!s || s.v !== 1) return null;
+    /* a non-numeric leftAt makes every comparison in bandOf() false and falls
+       through to the month gift. a newborn is honest; an unearned gift is a lie. */
+    if(!Number.isFinite(s.leftAt) || !Number.isFinite(s.born)) return null;
     if(!s.pos || !Array.isArray(s.objects)) return null;
     return s;
   }catch(e){ return null; }
@@ -329,7 +340,11 @@ function simulate(st, away, now){
     return {next:s, band:"slept", fresh:[]};
   }
 
-  const band = bandOf(Math.max(0, away), s);
+  /* a clock that jumps can't buy an absence the creature never lived through.
+     without this, a dead RTC that resets and then gets corrected hands over the
+     month gift — once, permanently — to a two-day-old creature. */
+  const lived = Math.max(0, now - (s.born || now));
+  const band = bandOf(Math.min(Math.max(0, away), lived), s);
   if (band === "none"){ s.leftAt = now; return {next:s, band:"none", fresh:[]}; }
 
   s.told = true;
@@ -490,7 +505,10 @@ const cv = document.getElementById("room");
 const cx = cv.getContext("2d");
 let W=0, H=0, DPR=1, G=null;
 let state = null, freshIds = [], anim = 1, animRAF = 0;
-const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* the only line above the first paint that could throw. everything else fails
+   downstream and leaves a partial room; this one would leave nothing. */
+let reduced = false;
+try { reduced = matchMedia("(prefers-reduced-motion: reduce)").matches; } catch(e){}
 
 function geometry(){
   const hz = Math.round(H*0.50);
@@ -1240,9 +1258,11 @@ const clamp = (x)=> x<0?0:x>1?1:x;
 /* ============================ coming and going ============================ */
 
 function resize(){
-  DPR = Math.min(2.5, window.devicePixelRatio || 1);
   W = cv.clientWidth || window.innerWidth;
   H = cv.clientHeight || window.innerHeight;
+  /* every engine caps a canvas dimension at 16384. past it you get a dead
+     context and a black page, so give up sharpness rather than the room. */
+  DPR = Math.min(2.5, window.devicePixelRatio || 1, 16384/Math.max(W, H, 1));
   cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
   cx.setTransform(DPR,0,0,DPR,0,0);
   geometry();
